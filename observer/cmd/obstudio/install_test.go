@@ -84,6 +84,67 @@ func TestWindsurfTargetUsesCodiumMCPConfig(t *testing.T) {
 	}
 }
 
+func TestCopilotTargetUsesVSCodeUserMCPJSON(t *testing.T) {
+	t.Parallel()
+
+	target, ok := targets["copilot"]
+	if !ok {
+		t.Fatal("expected copilot target to exist")
+	}
+
+	if path := target.mcpConfig.path(); !strings.HasSuffix(path, filepath.Join("Code", "User", "mcp.json")) {
+		t.Fatalf("expected Copilot MCP config path to end with Code/User/mcp.json, got %q", path)
+	}
+	if target.mcpConfig.serversKey != "servers" {
+		t.Fatalf("expected Copilot MCP config rootKey to be %q, got %q", "servers", target.mcpConfig.serversKey)
+	}
+	if target.skillsDir != nil {
+		t.Fatal("expected Copilot to have no skillsDir")
+	}
+	if !target.mcpConfig.includeLocalType {
+		t.Fatal("expected Copilot MCP config to have includeLocalType=true")
+	}
+	if !target.mcpConfig.includeRemoteType {
+		t.Fatal("expected Copilot MCP config to have includeRemoteType=true")
+	}
+}
+
+func TestConfigureMCPCopilotLocalEmitsStdioType(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "mcp.json")
+	target := targets["copilot"].mcpConfig
+	target.path = func() string { return configPath }
+
+	if err := configureMCP(target, "/usr/local/bin/obstudio", ""); err != nil {
+		t.Fatalf("configureMCP returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read Copilot MCP config: %v", err)
+	}
+	var config struct {
+		Servers map[string]map[string]any `json:"servers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("unmarshal Copilot MCP config: %v", err)
+	}
+	server := config.Servers["obstudio"]
+	if server == nil {
+		t.Fatalf("obstudio entry missing from servers: %#v", config.Servers)
+	}
+	if got := server["type"]; got != "stdio" {
+		t.Fatalf("Copilot local config type = %#v, want %q", got, "stdio")
+	}
+	if got := server["command"]; got != "/usr/local/bin/obstudio" {
+		t.Fatalf("Copilot local config command = %#v, want /usr/local/bin/obstudio", got)
+	}
+	if _, ok := server["url"]; ok {
+		t.Fatalf("Copilot local config should not include url field, got %#v", server["url"])
+	}
+}
+
 func TestInstallTargetFlagAcceptsCommaSeparatedValues(t *testing.T) {
 	t.Parallel()
 
@@ -305,7 +366,7 @@ func TestUpsertJSONMCPServerPreservesExistingEntries(t *testing.T) {
 		t.Fatalf("write initial config: %v", err)
 	}
 
-	if err := upsertJSONMCPServer(path, map[string]any{
+	if err := upsertJSONMCPServer(path, "mcpServers", map[string]any{
 		"type": "http",
 		"url":  "http://127.0.0.1:3000/mcp",
 	}, nil, nil); err != nil {
